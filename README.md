@@ -1,4 +1,18 @@
-# mAP (mean Average Precision)
+# Oriented mAP (mean Average Precision)
+
+This is a small addition to the original repo to be able to deal with oriented bounding boxes.
+Simply, follow the same steps in the original Readme, but add the following:
+
+- First, make sure to install Shapely package: <br>
+`$ pip install shapely`
+
+- Second, add yaw (oriented box angle) in radian to the end of each line in the text files,
+So for example, the detected boxes will be as follows:
+ ```
+    <class_name> <confidence> <left> <top> <right> <bottom> <yaw>
+ ```
+ 
+ ## Original Readme:
 
 [![GitHub stars](https://img.shields.io/github/stars/Cartucho/mAP.svg?style=social&label=Stars)](https://github.com/Cartucho/mAP)
 
