@@ -9,6 +9,10 @@ import math
 
 import numpy as np
 
+import shapely.geometry
+import shapely.affinity
+from shapely.geometry import Point
+
 MINOVERLAP = 0.5 # default value (defined in the PASCAL VOC2012 challenge)
 
 parser = argparse.ArgumentParser()
@@ -330,6 +334,11 @@ def draw_plot_func(dictionary, n_classes, window_title, plot_title, x_label, out
     # close the plot
     plt.close()
 
+def get_contour(b_box):
+    cont = shapely.geometry.box(b_box[0], b_box[1], b_box[2], b_box[3])
+    rot_cont = shapely.affinity.rotate(cont, b_box[4])
+    return rot_cont 
+
 """
  Create a ".temp_files/" and "results/" directory
 """
@@ -379,10 +388,10 @@ for txt_file in ground_truth_files_list:
     for line in lines_list:
         try:
             if "difficult" in line:
-                    class_name, left, top, right, bottom, _difficult = line.split()
+                    class_name, left, top, right, bottom, yaw, _difficult = line.split()
                     is_difficult = True
             else:
-                    class_name, left, top, right, bottom = line.split()
+                    class_name, left, top, right, bottom, yaw = line.split()
         except ValueError:
             error_msg = "Error: File " + txt_file + " in the wrong format.\n"
             error_msg += " Expected: <class_name> <left> <top> <right> <bottom> ['difficult']\n"
@@ -393,7 +402,7 @@ for txt_file in ground_truth_files_list:
         # check if class is in the ignore list, if yes skip
         if class_name in args.ignore:
             continue
-        bbox = left + " " + top + " " + right + " " +bottom
+        bbox = left + " " + top + " " + right + " " +bottom + " " + yaw
         if is_difficult:
                 bounding_boxes.append({"class_name":class_name, "bbox":bbox, "used":False, "difficult":True})
                 is_difficult = False
@@ -474,7 +483,7 @@ for class_index, class_name in enumerate(gt_classes):
         lines = file_lines_to_list(txt_file)
         for line in lines:
             try:
-                tmp_class_name, confidence, left, top, right, bottom = line.split()
+                tmp_class_name, confidence, left, top, right, bottom, yaw = line.split()
             except ValueError:
                 error_msg = "Error: File " + txt_file + " in the wrong format.\n"
                 error_msg += " Expected: <class_name> <confidence> <left> <top> <right> <bottom>\n"
@@ -482,7 +491,7 @@ for class_index, class_name in enumerate(gt_classes):
                 error(error_msg)
             if tmp_class_name == class_name:
                 #print("match")
-                bbox = left + " " + top + " " + right + " " +bottom
+                bbox = left + " " + top + " " + right + " " + bottom + " " + yaw
                 bounding_boxes.append({"confidence":confidence, "file_id":file_id, "bbox":bbox})
                 #print(bounding_boxes)
     # sort detection-results by decreasing confidence
@@ -550,17 +559,18 @@ with open(results_files_path + "/results.txt", 'w') as results_file:
                 # look for a class_name match
                 if obj["class_name"] == class_name:
                     bbgt = [ float(x) for x in obj["bbox"].split() ]
-                    bi = [max(bb[0],bbgt[0]), max(bb[1],bbgt[1]), min(bb[2],bbgt[2]), min(bb[3],bbgt[3])]
-                    iw = bi[2] - bi[0] + 1
-                    ih = bi[3] - bi[1] + 1
-                    if iw > 0 and ih > 0:
-                        # compute overlap (IoU) = area of intersection / area of union
-                        ua = (bb[2] - bb[0] + 1) * (bb[3] - bb[1] + 1) + (bbgt[2] - bbgt[0]
-                                        + 1) * (bbgt[3] - bbgt[1] + 1) - iw * ih
-                        ov = iw * ih / ua
-                        if ov > ovmax:
-                            ovmax = ov
-                            gt_match = obj
+                    # compute overlap (IoU) = area of intersection / area of union
+                    bb_con = get_contour(bb)
+                    bbgt_con = get_contour(bbgt)
+                    intersection = bb_con.intersection(bbgt_con).area
+                    union = bb_con.union(bbgt_con).area
+                    if intersection == 0.0 or union == 0.0:
+                        ov = 0.
+                    else:
+                        ov = intersection / union
+                    if ov > ovmax:
+                        ovmax = ov
+                        gt_match = obj
 
             # assign detection as true positive/don't care/false positive
             if show_animation:
@@ -633,12 +643,28 @@ with open(results_files_path + "/results.txt", 'w') as results_file:
                 font = cv2.FONT_HERSHEY_SIMPLEX
                 if ovmax > 0: # if there is intersections between the bounding-boxes
                     bbgt = [ int(round(float(x))) for x in gt_match["bbox"].split() ]
-                    cv2.rectangle(img,(bbgt[0],bbgt[1]),(bbgt[2],bbgt[3]),light_blue,2)
-                    cv2.rectangle(img_cumulative,(bbgt[0],bbgt[1]),(bbgt[2],bbgt[3]),light_blue,2)
+                    #cv2.rectangle(img,(bbgt[0],bbgt[1]),(bbgt[2],bbgt[3]),light_blue,2)
+                    #cv2.rectangle(img_cumulative,(bbgt[0],bbgt[1]),(bbgt[2],bbgt[3]),light_blue,2)
+                    rot_rect_img = ((int(bbgt[0]+(bbgt[2]-bbgt[0])/2.0), int(bbgt[1]+(bbgt[3]-bbgt[1])/2.0)), (int((bbgt[2]-bbgt[0])/2.0), int((bbgt[3]-bbgt[1])/2.0)), math.degrees(bbgt[4]))
+                    box_img = cv2.boxPoints(rot_rect_img)
+                    box_img = np.int0(box_img)
+                    cv2.drawContours(img, [box_img], 0, light_blue, 1)
+                    rot_rect_img_cum = ((int(bbgt[0]+(bbgt[2]-bbgt[0])/2.0), int(bbgt[1]+(bbgt[3]-bbgt[1])/2.0)), (int((bbgt[2]-bbgt[0])/2.0), int((bbgt[3]-bbgt[1])/2.0)), math.degrees(bbgt[4]))
+                    box_img_cum = cv2.boxPoints(rot_rect_img_cum)
+                    box_img_cum = np.int0(box_img_cum)
+                    cv2.drawContours(img_cumulative, [box_img_cum], 0, light_blue, 1)
                     cv2.putText(img_cumulative, class_name, (bbgt[0],bbgt[1] - 5), font, 0.6, light_blue, 1, cv2.LINE_AA)
                 bb = [int(i) for i in bb]
-                cv2.rectangle(img,(bb[0],bb[1]),(bb[2],bb[3]),color,2)
-                cv2.rectangle(img_cumulative,(bb[0],bb[1]),(bb[2],bb[3]),color,2)
+                #cv2.rectangle(img,(bb[0],bb[1]),(bb[2],bb[3]),color,2)
+                #cv2.rectangle(img_cumulative,(bb[0],bb[1]),(bb[2],bb[3]),color,2)
+                rot_rect_img = ((int(bb[0]+(bb[2]-bb[0])/2.0), int(bb[1]+(bb[3]-bb[1])/2.0)), (int((bb[2]-bb[0])/2.0), int((bb[3]-bb[1])/2.0)), math.degrees(bb[4]))
+                box_img = cv2.boxPoints(rot_rect_img)
+                box_img = np.int0(box_img)
+                cv2.drawContours(img, [box_img], 0, color, 1)
+                rot_rect_img_cum = ((int(bb[0]+(bb[2]-bb[0])/2.0), int(bb[1]+(bb[3]-bb[1])/2.0)), (int((bb[2]-bb[0])/2.0), int((bb[3]-bb[1])/2.0)), math.degrees(bb[4]))
+                box_img_cum = cv2.boxPoints(rot_rect_img_cum)
+                box_img_cum = np.int0(box_img_cum)
+                cv2.drawContours(img_cumulative, [box_img_cum], 0, color, 1)
                 cv2.putText(img_cumulative, class_name, (bb[0],bb[1] - 5), font, 0.6, color, 1, cv2.LINE_AA)
                 # show image
                 cv2.imshow("Animation", img)
